@@ -3,8 +3,8 @@ BOT QUÉT TÍN HIỆU + GỬI EMAIL — chạy tự động qua GitHub Actions
 """
 
 from datetime import date, timedelta
-import time
 import os
+import time
 import smtplib
 from email.mime.text import MIMEText
 
@@ -19,8 +19,6 @@ MA_CO_PHIEU = [
     "CTG", "BID", "VPB", "MBB", "ACB", "STB", "SSI", "VRE", "PLX", "POW",
     "GVR", "SAB", "HDB", "TPB", "BVH", "KDH", "PDR", "NVL", "DGC", "VJC",
 ]
-
-RUI_RO_R = 1.0  # tỷ lệ R:R mặc định 1:2 (stoploss 1R, chốt lời 2R)
 
 NGAY_KET_THUC = date.today()
 NGAY_BAT_DAU = NGAY_KET_THUC - timedelta(days=100)
@@ -95,7 +93,7 @@ def tinh_diem_cat_lo_chot_loi(row) -> tuple:
     entry = row["close"]
     stop_loss = min(row["day_cuc_bo"], row["low"]) if pd.notna(row["day_cuc_bo"]) else row["low"] * 0.97
     risk = entry - stop_loss
-    take_profit = entry + risk * 2  # R:R = 1:2
+    take_profit = entry + risk * 2
     return round(entry, 2), round(stop_loss, 2), round(take_profit, 2)
 
 
@@ -127,27 +125,38 @@ def main():
     ket_qua_email = []
 
     for ma in MA_CO_PHIEU:
-        try:
-            time.sleep(4)
-            df = lay_du_lieu(ma)
-            if df is None or len(df) < 25:
-                continue
-            df = tinh_cong_thuc(df)
-            df = phat_hien_tin_hieu(df)
+        thanh_cong = False
+        so_lan_thu = 0
+        while not thanh_cong and so_lan_thu < 3:
+            try:
+                time.sleep(6)
+                df = lay_du_lieu(ma)
+                if df is None or len(df) < 25:
+                    thanh_cong = True
+                    continue
+                df = tinh_cong_thuc(df)
+                df = phat_hien_tin_hieu(df)
 
-            row_moi_nhat = df.iloc[-1]
+                row_moi_nhat = df.iloc[-1]
 
-            for cot, ten in tin_hieu_ten.items():
-                if bool(row_moi_nhat[cot]):
-                    entry, sl, tp = tinh_diem_cat_lo_chot_loi(row_moi_nhat)
-                    ket_qua_email.append(
-                        f"{ma} — {ten}\n"
-                        f"  Giá hiện tại: {entry}\n"
-                        f"  Cắt lỗ: {sl}\n"
-                        f"  Chốt lời: {tp}\n"
-                    )
-        except Exception as e:
-            print(f"Lỗi mã {ma}: {e}")
+                for cot, ten in tin_hieu_ten.items():
+                    if bool(row_moi_nhat[cot]):
+                        entry, sl, tp = tinh_diem_cat_lo_chot_loi(row_moi_nhat)
+                        ket_qua_email.append(
+                            f"{ma} — {ten}\n"
+                            f"  Giá hiện tại: {entry}\n"
+                            f"  Cắt lỗ: {sl}\n"
+                            f"  Chốt lời: {tp}\n"
+                        )
+                thanh_cong = True
+            except Exception as e:
+                so_lan_thu += 1
+                print(f"Lỗi mã {ma} (lần {so_lan_thu}): {e}")
+                if "limit" in str(e).lower() or "rate" in str(e).lower():
+                    print("Bị giới hạn API, đợi 30 giây rồi thử lại...")
+                    time.sleep(30)
+                else:
+                    break
 
     if ket_qua_email:
         noi_dung = "\n".join(ket_qua_email)
