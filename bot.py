@@ -3,6 +3,7 @@ BOT QUÉT TÍN HIỆU + GỬI EMAIL — chạy tự động qua GitHub Actions
 """
 
 from datetime import date, timedelta
+import time
 import os
 import smtplib
 from email.mime.text import MIMEText
@@ -127,6 +128,7 @@ def main():
 
     for ma in MA_CO_PHIEU:
         try:
+            time.sleep(4)
             df = lay_du_lieu(ma)
             if df is None or len(df) < 25:
                 continue
