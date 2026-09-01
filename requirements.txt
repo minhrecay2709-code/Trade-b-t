@@ -1,0 +1,3 @@
+vnstock
+pandas
+numpy
