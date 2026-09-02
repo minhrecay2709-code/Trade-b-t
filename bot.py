@@ -15,8 +15,8 @@ from vnstock import Quote
 
 # ============ CẤU HÌNH ============
 MA_CO_PHIEU = [
-    "FPT", "VNM", "HPG", "MWG", "VCB", "VHM", "VIC", "GAS", "MSN", "TCB",
-    "CTG", "BID", "VPB", "MBB", "ACB", "STB", "SSI", "VRE", "PLX", "POW",
+    "MCP", "VNM", "HPG", "MWG", "VCB", "VHM", "VIC", "GAS", "MSN", "TCB",
+    "CTG", "BID", "VPB", "MBB", "TIP", "STB", "SSI", "VRE", "PLX", "POW",
     "GVR", "SAB", "HDB", "TPB", "BVH", "KDH", "PDR", "NVL", "DGC", "VJC",
 ]
 
