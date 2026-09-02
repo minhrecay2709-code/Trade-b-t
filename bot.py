@@ -1,10 +1,11 @@
 """
-BOT QUÉT TÍN HIỆU + GỬI EMAIL — chạy tự động qua GitHub Actions
+BOT QUÉT TÍN HIỆU + GỬI EMAIL — có bộ lọc VN-Index + chống gửi trùng lặp
 """
 
 from datetime import date, timedelta
 import os
 import time
+import json
 import smtplib
 from email.mime.text import MIMEText
 
@@ -15,16 +16,43 @@ from vnstock import Quote
 
 # ============ CẤU HÌNH ============
 MA_CO_PHIEU = [
-    "MCP", "VNM", "HPG", "MWG", "VCB", "VHM", "VIC", "GAS", "MSN", "TCB",
-    "CTG", "BID", "VPB", "MBB", "TIP", "STB", "SSI", "VRE", "PLX", "POW",
+    "FPT", "VNM", "HPG", "MWG", "VCB", "VHM", "VIC", "GAS", "MSN", "TCB",
+    "CTG", "BID", "VPB", "MBB", "ACB", "STB", "SSI", "VRE", "PLX", "POW",
     "GVR", "SAB", "HDB", "TPB", "BVH", "KDH", "PDR", "NVL", "DGC", "VJC",
 ]
+
+THOI_GIAN_NGHI_GIUA_MA = 6
+THOI_GIAN_NGHI_KHI_BI_CHAN = 30
+SO_LAN_THU_LAI = 3
+FILE_TRANG_THAI = "trang_thai_da_gui.json"
 
 NGAY_KET_THUC = date.today()
 NGAY_BAT_DAU = NGAY_KET_THUC - timedelta(days=100)
 
 
-# ============ LẤY DỮ LIỆU ============
+# ============ ĐỌC / GHI TRẠNG THÁI ĐÃ GỬI (chống trùng lặp) ============
+def doc_trang_thai_da_gui() -> dict:
+    if os.path.exists(FILE_TRANG_THAI):
+        try:
+            with open(FILE_TRANG_THAI, "r", encoding="utf-8") as f:
+                du_lieu = json.load(f)
+        except Exception:
+            du_lieu = {}
+    else:
+        du_lieu = {}
+
+    # Dọn dẹp: chỉ giữ lại bản ghi của HÔM NAY, xóa dữ liệu ngày cũ
+    hom_nay = str(date.today())
+    return du_lieu.get(hom_nay, {})
+
+
+def ghi_trang_thai_da_gui(da_gui_hom_nay: dict):
+    hom_nay = str(date.today())
+    with open(FILE_TRANG_THAI, "w", encoding="utf-8") as f:
+        json.dump({hom_nay: da_gui_hom_nay}, f, ensure_ascii=False, indent=2)
+
+
+# ============ LẤY DỮ LIỆU MỘT MÃ ============
 def lay_du_lieu(ma: str) -> pd.DataFrame:
     q = Quote(symbol=ma, source="KBS")
     df = q.history(
@@ -33,6 +61,32 @@ def lay_du_lieu(ma: str) -> pd.DataFrame:
         interval="1D",
     )
     return df.reset_index(drop=True)
+
+
+# ============ KIỂM TRA BỐI CẢNH THỊ TRƯỜNG (VN-INDEX) ============
+def kiem_tra_thi_truong() -> tuple:
+    try:
+        df = lay_du_lieu("VNINDEX")
+        if df is None or len(df) < 25:
+            return True, "Không đủ dữ liệu VN-Index để đánh giá, bỏ qua bộ lọc."
+
+        df = df.copy()
+        df["ma20"] = df["close"].rolling(20).mean()
+        row = df.iloc[-1]
+
+        if pd.isna(row["ma20"]):
+            return True, "MA20 của VN-Index chưa tính được, bỏ qua bộ lọc."
+
+        dang_tren_ma20 = row["close"] >= row["ma20"]
+        pct_so_ma = (row["close"] - row["ma20"]) / row["ma20"] * 100
+        ghi_chu = (
+            f"VN-Index: {row['close']:.2f} | MA20: {row['ma20']:.2f} | "
+            f"Cách MA20: {pct_so_ma:+.2f}%"
+        )
+        return bool(dang_tren_ma20), ghi_chu
+    except Exception as e:
+        print(f"Lỗi kiểm tra VN-Index: {e}")
+        return True, "Lỗi khi lấy dữ liệu VN-Index, bỏ qua bộ lọc (mặc định cho phép)."
 
 
 # ============ TÍNH CÔNG THỨC ============
@@ -99,18 +153,26 @@ def tinh_diem_cat_lo_chot_loi(row) -> tuple:
 
 # ============ GỬI EMAIL ============
 def gui_email(noi_dung: str):
-    email_user = os.environ["EMAIL_USER"]
-    email_pass = os.environ["EMAIL_PASS"]
-    email_to = os.environ["EMAIL_TO"]
+    email_user = os.environ.get("EMAIL_USER", "").strip()
+    email_pass = os.environ.get("EMAIL_PASS", "").strip()
+    email_to = os.environ.get("EMAIL_TO", "").strip()
+
+    if not email_user or not email_pass or not email_to:
+        raise RuntimeError("Thiếu secret: kiểm tra EMAIL_USER, EMAIL_PASS, EMAIL_TO.")
 
     msg = MIMEText(noi_dung, "plain", "utf-8")
     msg["Subject"] = f"[Trade Bot] Tín hiệu {date.today()}"
     msg["From"] = email_user
     msg["To"] = email_to
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(email_user, email_pass)
-        server.sendmail(email_user, [email_to], msg.as_string())
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(email_user, email_pass)
+            server.sendmail(email_user, [email_to], msg.as_string())
+    except smtplib.SMTPAuthenticationError:
+        raise RuntimeError(
+            "Gmail từ chối đăng nhập. Kiểm tra lại EMAIL_USER và EMAIL_PASS (App Password)."
+        )
 
 
 # ============ MAIN ============
@@ -122,14 +184,25 @@ def main():
         "tin_hieu_churning": "Churning (phân phối tại đỉnh)",
     }
 
+    da_gui_hom_nay = doc_trang_thai_da_gui()
+
+    time.sleep(THOI_GIAN_NGHI_GIUA_MA)
+    thi_truong_thuan_loi, ghi_chu_thi_truong = kiem_tra_thi_truong()
+    print(f"Bối cảnh thị trường: {ghi_chu_thi_truong}")
+
+    if not thi_truong_thuan_loi:
+        print("VN-Index đang dưới MA20 — tạm ngưng gửi tín hiệu mua mới.")
+        return
+
     ket_qua_email = []
+    co_tin_hieu_moi = False
 
     for ma in MA_CO_PHIEU:
         thanh_cong = False
         so_lan_thu = 0
-        while not thanh_cong and so_lan_thu < 3:
+        while not thanh_cong and so_lan_thu < SO_LAN_THU_LAI:
             try:
-                time.sleep(6)
+                time.sleep(THOI_GIAN_NGHI_GIUA_MA)
                 df = lay_du_lieu(ma)
                 if df is None or len(df) < 25:
                     thanh_cong = True
@@ -141,6 +214,11 @@ def main():
 
                 for cot, ten in tin_hieu_ten.items():
                     if bool(row_moi_nhat[cot]):
+                        khoa = f"{ma}_{cot}"
+                        if khoa in da_gui_hom_nay:
+                            print(f"Bỏ qua {ma} - {ten} (đã gửi hôm nay rồi)")
+                            continue
+
                         entry, sl, tp = tinh_diem_cat_lo_chot_loi(row_moi_nhat)
                         ket_qua_email.append(
                             f"{ma} — {ten}\n"
@@ -148,23 +226,28 @@ def main():
                             f"  Cắt lỗ: {sl}\n"
                             f"  Chốt lời: {tp}\n"
                         )
+                        da_gui_hom_nay[khoa] = True
+                        co_tin_hieu_moi = True
                 thanh_cong = True
             except Exception as e:
                 so_lan_thu += 1
                 print(f"Lỗi mã {ma} (lần {so_lan_thu}): {e}")
                 if "limit" in str(e).lower() or "rate" in str(e).lower():
-                    print("Bị giới hạn API, đợi 30 giây rồi thử lại...")
-                    time.sleep(30)
+                    print(f"Bị giới hạn API, đợi {THOI_GIAN_NGHI_KHI_BI_CHAN} giây rồi thử lại...")
+                    time.sleep(THOI_GIAN_NGHI_KHI_BI_CHAN)
                 else:
                     break
 
     if ket_qua_email:
-        noi_dung = "\n".join(ket_qua_email)
+        noi_dung = f"{ghi_chu_thi_truong}\n\n" + "\n".join(ket_qua_email)
         noi_dung += "\n\n(Lưu ý: đây là tín hiệu tự động từ backtest đơn giản, không phải khuyến nghị đầu tư.)"
         gui_email(noi_dung)
-        print("Đã gửi email với", len(ket_qua_email), "tín hiệu.")
+        print("Đã gửi email với", len(ket_qua_email), "tín hiệu mới.")
     else:
-        print("Không có tín hiệu nào lúc này.")
+        print("Không có tín hiệu MỚI nào lúc này (có thể do đã gửi hết trong hôm nay, hoặc chưa có mã nào đủ điều kiện).")
+
+    if co_tin_hieu_moi:
+        ghi_trang_thai_da_gui(da_gui_hom_nay)
 
 
 if __name__ == "__main__":
