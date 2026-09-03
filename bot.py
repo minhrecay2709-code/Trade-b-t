@@ -1,6 +1,6 @@
 """
 BOT QUÉT TÍN HIỆU + GỬI EMAIL
-Bản đầy đủ: lọc VN-Index + chống gửi trùng lặp + RSI + ATR (cắt lỗ thích ứng)
+Bản nâng cấp: RSI/ATR chuẩn Wilder + lọc thanh khoản + email lỗi không làm sập bot
 """
 
 from datetime import date, timedelta
@@ -21,14 +21,18 @@ MA_CO_PHIEU = [
     "CTG", "BID", "VPB", "MBB", "ACB", "STB", "SSI", "VRE", "PLX", "POW",
     "GVR", "SAB", "HDB", "TPB", "BVH", "KDH", "PDR", "NVL", "DGC", "VJC",
 ]
+# LƯU Ý: kiểm tra lại danh sách này — nếu "TIP", "MCP" là gõ nhầm (bản trước là
+# "FPT", "VNM"), sửa lại cho đúng ý bạn muốn theo dõi.
 
 THOI_GIAN_NGHI_GIUA_MA = 6
-THOI_GIAN_NGHI_KHI_BI_CHAN = 30
-SO_LAN_THU_LAI = 3
+THOI_GIAN_NGHI_KHI_BI_CHAN = 20   # giảm từ 30 xuống 20 giây
+SO_LAN_THU_LAI = 2                 # giảm từ 3 xuống 2 lần, tránh 1 lượt quét quá dài
 FILE_TRANG_THAI = "trang_thai_da_gui.json"
 
-HE_SO_ATR_CAT_LO = 1.5  # cắt lỗ = giá vào lệnh - 1.5 x ATR14
-TY_LE_RR = 2.0           # chốt lời = rủi ro x 2 (R:R 1:2)
+HE_SO_ATR_CAT_LO = 1.5
+TY_LE_RR = 2.0
+
+KHOI_LUONG_TB_TOI_THIEU = 100_000  # cổ phiếu/phiên — lọc bớt mã thanh khoản quá thấp
 
 NGAY_KET_THUC = date.today()
 NGAY_BAT_DAU = NGAY_KET_THUC - timedelta(days=100)
@@ -91,25 +95,26 @@ def kiem_tra_thi_truong() -> tuple:
         return True, "Lỗi khi lấy dữ liệu VN-Index, bỏ qua bộ lọc (mặc định cho phép)."
 
 
-# ============ TÍNH RSI ============
+# ============ TÍNH RSI (chuẩn Wilder, dùng EWM) ============
 def tinh_rsi(close: pd.Series, chu_ky: int = 14) -> pd.Series:
     thay_doi = close.diff()
     tang = thay_doi.clip(lower=0)
     giam = -thay_doi.clip(upper=0)
-    tb_tang = tang.rolling(chu_ky).mean()
-    tb_giam = giam.rolling(chu_ky).mean()
+    # Wilder's smoothing ~ EWM với alpha = 1/chu_ky
+    tb_tang = tang.ewm(alpha=1 / chu_ky, adjust=False, min_periods=chu_ky).mean()
+    tb_giam = giam.ewm(alpha=1 / chu_ky, adjust=False, min_periods=chu_ky).mean()
     rs = tb_tang / tb_giam.replace(0, np.nan)
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
 
-# ============ TÍNH ATR ============
+# ============ TÍNH ATR (chuẩn Wilder, dùng EWM) ============
 def tinh_atr(df: pd.DataFrame, chu_ky: int = 14) -> pd.Series:
     high_low = df["high"] - df["low"]
     high_close_truoc = (df["high"] - df["close"].shift(1)).abs()
     low_close_truoc = (df["low"] - df["close"].shift(1)).abs()
     true_range = pd.concat([high_low, high_close_truoc, low_close_truoc], axis=1).max(axis=1)
-    atr = true_range.rolling(chu_ky).mean()
+    atr = true_range.ewm(alpha=1 / chu_ky, adjust=False, min_periods=chu_ky).mean()
     return atr
 
 
@@ -136,16 +141,18 @@ def tinh_cong_thuc(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ============ PHÁT HIỆN TÍN HIỆU (đã thêm điều kiện RSI) ============
+# ============ PHÁT HIỆN TÍN HIỆU (đã thêm RSI + lọc thanh khoản) ============
 def phat_hien_tin_hieu(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+
+    thanh_khoan_du = df["vol_ma20"] >= KHOI_LUONG_TB_TOI_THIEU
 
     gia_tren_ma = df["close"] >= df["ma20"]
     gia_gan_ma = (df["close"] - df["ma20"]).abs() / df["ma20"] <= 0.03
     rsi_trung_tinh = df["rsi14"].between(40, 65)
     df["tin_hieu_nen_nen"] = (
         (df["than_pct"] < 30) & (df["vol_ratio"] < 0.5) & gia_tren_ma
-        & gia_gan_ma & (df["do_doc_ma_pct"] > 0) & rsi_trung_tinh
+        & gia_gan_ma & (df["do_doc_ma_pct"] > 0) & rsi_trung_tinh & thanh_khoan_du
     )
 
     than_nho = df["than_pct"] < 40
@@ -153,7 +160,8 @@ def phat_hien_tin_hieu(df: pd.DataFrame) -> pd.DataFrame:
     gan_ma = (df["close"] - df["ma20"]).abs() / df["ma20"] <= 0.02
     rsi_khong_qua_ban = df["rsi14"] > 35
     df["tin_hieu_test_ma"] = (
-        (than_nho | bong_duoi_dai) & (df["vol_ratio"].between(0.5, 0.7)) & gan_ma & rsi_khong_qua_ban
+        (than_nho | bong_duoi_dai) & (df["vol_ratio"].between(0.5, 0.7)) & gan_ma
+        & rsi_khong_qua_ban & thanh_khoan_du
     )
 
     than_lon = df["than_pct"] > 70
@@ -162,12 +170,15 @@ def phat_hien_tin_hieu(df: pd.DataFrame) -> pd.DataFrame:
     vuot_ma = df["close"] > df["ma20"]
     vol_no = df["vol_ratio"] > 2.0
     rsi_khong_qua_mua = df["rsi14"] < 78
-    df["tin_hieu_breakout"] = than_lon & dong_cua_cao & vuot_dinh & vuot_ma & vol_no & rsi_khong_qua_mua
+    df["tin_hieu_breakout"] = (
+        than_lon & dong_cua_cao & vuot_dinh & vuot_ma & vol_no & rsi_khong_qua_mua & thanh_khoan_du
+    )
 
     gan_dinh = (df["close"] - df["dinh_cuc_bo"]).abs() / df["dinh_cuc_bo"] <= 0.03
     rsi_qua_mua = df["rsi14"] > 70
     df["tin_hieu_churning"] = (
-        (df["than_pct"] < 30) & (df["bong_tren_pct"] > 40) & (df["vol_ratio"] > 1.5) & gan_dinh & rsi_qua_mua
+        (df["than_pct"] < 30) & (df["bong_tren_pct"] > 40) & (df["vol_ratio"] > 1.5)
+        & gan_dinh & rsi_qua_mua & thanh_khoan_du
     )
 
     return df
@@ -290,13 +301,18 @@ def main():
     if ket_qua_email:
         noi_dung = f"{ghi_chu_thi_truong}\n\n" + "\n".join(ket_qua_email)
         noi_dung += "\n\n(Lưu ý: đây là tín hiệu tự động từ backtest đơn giản, không phải khuyến nghị đầu tư.)"
-        gui_email(noi_dung)
-        print("Đã gửi email với", len(ket_qua_email), "tín hiệu mới.")
+        try:
+            gui_email(noi_dung)
+            print("Đã gửi email với", len(ket_qua_email), "tín hiệu mới.")
+            if co_tin_hieu_moi:
+                ghi_trang_thai_da_gui(da_gui_hom_nay)
+        except Exception as e:
+            # Lỗi gửi email KHÔNG làm sập cả bot, và KHÔNG lưu trạng thái
+            # để lần chạy sau tự động thử gửi lại đúng các tín hiệu này.
+            print(f"Gửi email thất bại: {e}")
+            print("Sẽ tự động thử gửi lại ở lần chạy kế tiếp.")
     else:
         print("Không có tín hiệu MỚI nào lúc này.")
-
-    if co_tin_hieu_moi:
-        ghi_trang_thai_da_gui(da_gui_hom_nay)
 
 
 if __name__ == "__main__":
