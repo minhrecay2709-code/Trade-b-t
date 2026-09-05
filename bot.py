@@ -1,6 +1,8 @@
 """
 BOT QUÉT TÍN HIỆU + GỬI EMAIL
-Bản nâng cấp: RSI/ATR chuẩn Wilder + lọc thanh khoản + email lỗi không làm sập bot
+Bản cập nhật theo backtest thực tế: đã bỏ tín hiệu "Nén nền cạn volume"
+(kỳ vọng lợi nhuận âm -0.10R), đánh dấu nổi bật tín hiệu "Churning"
+(kỳ vọng lợi nhuận tốt nhất +0.46R theo backtest 2 năm).
 """
 
 from datetime import date, timedelta
@@ -21,18 +23,16 @@ MA_CO_PHIEU = [
     "CTG", "BID", "VPB", "MBB", "ACB", "STB", "SSI", "VRE", "PLX", "POW",
     "GVR", "SAB", "HDB", "TPB", "BVH", "KDH", "PDR", "NVL", "DGC", "VJC",
 ]
-# LƯU Ý: kiểm tra lại danh sách này — nếu "TIP", "MCP" là gõ nhầm (bản trước là
-# "FPT", "VNM"), sửa lại cho đúng ý bạn muốn theo dõi.
 
 THOI_GIAN_NGHI_GIUA_MA = 6
-THOI_GIAN_NGHI_KHI_BI_CHAN = 20   # giảm từ 30 xuống 20 giây
-SO_LAN_THU_LAI = 2                 # giảm từ 3 xuống 2 lần, tránh 1 lượt quét quá dài
+THOI_GIAN_NGHI_KHI_BI_CHAN = 20
+SO_LAN_THU_LAI = 2
 FILE_TRANG_THAI = "trang_thai_da_gui.json"
 
 HE_SO_ATR_CAT_LO = 1.5
 TY_LE_RR = 2.0
 
-KHOI_LUONG_TB_TOI_THIEU = 100_000  # cổ phiếu/phiên — lọc bớt mã thanh khoản quá thấp
+KHOI_LUONG_TB_TOI_THIEU = 100_000
 
 NGAY_KET_THUC = date.today()
 NGAY_BAT_DAU = NGAY_KET_THUC - timedelta(days=100)
@@ -100,7 +100,6 @@ def tinh_rsi(close: pd.Series, chu_ky: int = 14) -> pd.Series:
     thay_doi = close.diff()
     tang = thay_doi.clip(lower=0)
     giam = -thay_doi.clip(upper=0)
-    # Wilder's smoothing ~ EWM với alpha = 1/chu_ky
     tb_tang = tang.ewm(alpha=1 / chu_ky, adjust=False, min_periods=chu_ky).mean()
     tb_giam = giam.ewm(alpha=1 / chu_ky, adjust=False, min_periods=chu_ky).mean()
     rs = tb_tang / tb_giam.replace(0, np.nan)
@@ -141,19 +140,12 @@ def tinh_cong_thuc(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ============ PHÁT HIỆN TÍN HIỆU (đã thêm RSI + lọc thanh khoản) ============
+# ============ PHÁT HIỆN TÍN HIỆU ============
+# ĐÃ BỎ "nén nền cạn volume" (backtest cho kỳ vọng lợi nhuận -0.10R, có hại)
 def phat_hien_tin_hieu(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
     thanh_khoan_du = df["vol_ma20"] >= KHOI_LUONG_TB_TOI_THIEU
-
-    gia_tren_ma = df["close"] >= df["ma20"]
-    gia_gan_ma = (df["close"] - df["ma20"]).abs() / df["ma20"] <= 0.03
-    rsi_trung_tinh = df["rsi14"].between(40, 65)
-    df["tin_hieu_nen_nen"] = (
-        (df["than_pct"] < 30) & (df["vol_ratio"] < 0.5) & gia_tren_ma
-        & gia_gan_ma & (df["do_doc_ma_pct"] > 0) & rsi_trung_tinh & thanh_khoan_du
-    )
 
     than_nho = df["than_pct"] < 40
     bong_duoi_dai = df["bong_duoi_pct"] > 50
@@ -234,11 +226,11 @@ def gui_email(noi_dung: str):
 
 # ============ MAIN ============
 def main():
+    # Tên hiển thị + đánh dấu độ tin cậy theo backtest 2 năm (kỳ vọng lợi nhuận theo R)
     tin_hieu_ten = {
-        "tin_hieu_nen_nen": "Nén nền cạn volume",
-        "tin_hieu_test_ma": "Test nền / Test MA",
+        "tin_hieu_churning": "⭐ Churning (phân phối tại đỉnh) — TÍN HIỆU ĐÁNG TIN CẬY NHẤT",
         "tin_hieu_breakout": "Breakout",
-        "tin_hieu_churning": "Churning (phân phối tại đỉnh)",
+        "tin_hieu_test_ma": "Test nền / Test MA",
     }
 
     da_gui_hom_nay = doc_trang_thai_da_gui()
@@ -300,15 +292,18 @@ def main():
 
     if ket_qua_email:
         noi_dung = f"{ghi_chu_thi_truong}\n\n" + "\n".join(ket_qua_email)
-        noi_dung += "\n\n(Lưu ý: đây là tín hiệu tự động từ backtest đơn giản, không phải khuyến nghị đầu tư.)"
+        noi_dung += (
+            "\n\n(Lưu ý: đây là tín hiệu tự động từ backtest đơn giản, không phải "
+            "khuyến nghị đầu tư. Theo backtest 2 năm, tín hiệu Churning có kỳ vọng "
+            "lợi nhuận tốt nhất (+0.46R), Test MA/Breakout gần như hòa vốn — "
+            "cân nhắc mức độ tin cậy khác nhau giữa các loại tín hiệu.)"
+        )
         try:
             gui_email(noi_dung)
             print("Đã gửi email với", len(ket_qua_email), "tín hiệu mới.")
             if co_tin_hieu_moi:
                 ghi_trang_thai_da_gui(da_gui_hom_nay)
         except Exception as e:
-            # Lỗi gửi email KHÔNG làm sập cả bot, và KHÔNG lưu trạng thái
-            # để lần chạy sau tự động thử gửi lại đúng các tín hiệu này.
             print(f"Gửi email thất bại: {e}")
             print("Sẽ tự động thử gửi lại ở lần chạy kế tiếp.")
     else:
