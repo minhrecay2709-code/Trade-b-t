@@ -1,8 +1,9 @@
 """
 BOT QUÉT TÍN HIỆU + GỬI EMAIL
-Bản cập nhật theo backtest thực tế: đã bỏ tín hiệu "Nén nền cạn volume"
-(kỳ vọng lợi nhuận âm -0.10R), đánh dấu nổi bật tín hiệu "Churning"
-(kỳ vọng lợi nhuận tốt nhất +0.46R theo backtest 2 năm).
+Bản cập nhật: CHỈ gửi email khi có tín hiệu "Churning" (kỳ vọng lợi nhuận
+tốt nhất theo backtest +0.46R). Test MA/Breakout vẫn được quét và ghi log
+(để theo dõi/backtest thêm sau này) nhưng KHÔNG gửi email — vì backtest 2 năm
+cho thấy 2 loại này gần như hòa vốn, gửi liên tục sẽ làm loãng giá trị email.
 """
 
 from datetime import date, timedelta
@@ -141,7 +142,7 @@ def tinh_cong_thuc(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ============ PHÁT HIỆN TÍN HIỆU ============
-# ĐÃ BỎ "nén nền cạn volume" (backtest cho kỳ vọng lợi nhuận -0.10R, có hại)
+# Vẫn tính cả test_ma/breakout để ghi log theo dõi, nhưng chỉ churning được gửi email
 def phat_hien_tin_hieu(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
@@ -210,7 +211,7 @@ def gui_email(noi_dung: str):
         raise RuntimeError("Thiếu secret: kiểm tra EMAIL_USER, EMAIL_PASS, EMAIL_TO.")
 
     msg = MIMEText(noi_dung, "plain", "utf-8")
-    msg["Subject"] = f"[Trade Bot] Tín hiệu {date.today()}"
+    msg["Subject"] = f"[Trade Bot] ⭐ Churning {date.today()}"
     msg["From"] = email_user
     msg["To"] = email_to
 
@@ -226,13 +227,6 @@ def gui_email(noi_dung: str):
 
 # ============ MAIN ============
 def main():
-    # Tên hiển thị + đánh dấu độ tin cậy theo backtest 2 năm (kỳ vọng lợi nhuận theo R)
-    tin_hieu_ten = {
-        "tin_hieu_churning": "⭐ Churning (phân phối tại đỉnh) — TÍN HIỆU ĐÁNG TIN CẬY NHẤT",
-        "tin_hieu_breakout": "Breakout",
-        "tin_hieu_test_ma": "Test nền / Test MA",
-    }
-
     da_gui_hom_nay = doc_trang_thai_da_gui()
 
     time.sleep(THOI_GIAN_NGHI_GIUA_MA)
@@ -263,16 +257,21 @@ def main():
                 rsi_hien_tai = row_moi_nhat.get("rsi14")
                 rsi_str = f"{rsi_hien_tai:.1f}" if pd.notna(rsi_hien_tai) else "N/A"
 
-                for cot, ten in tin_hieu_ten.items():
-                    if bool(row_moi_nhat[cot]):
-                        khoa = f"{ma}_{cot}"
-                        if khoa in da_gui_hom_nay:
-                            print(f"Bỏ qua {ma} - {ten} (đã gửi hôm nay rồi)")
-                            continue
+                # Ghi log tất cả tín hiệu (kể cả test_ma, breakout) để theo dõi/backtest sau
+                if bool(row_moi_nhat["tin_hieu_test_ma"]):
+                    print(f"[Chỉ ghi log, không gửi mail] {ma} - Test MA")
+                if bool(row_moi_nhat["tin_hieu_breakout"]):
+                    print(f"[Chỉ ghi log, không gửi mail] {ma} - Breakout")
 
+                # CHỈ gửi email cho tín hiệu Churning
+                if bool(row_moi_nhat["tin_hieu_churning"]):
+                    khoa = f"{ma}_tin_hieu_churning"
+                    if khoa in da_gui_hom_nay:
+                        print(f"Bỏ qua {ma} - Churning (đã gửi hôm nay rồi)")
+                    else:
                         entry, sl, tp = tinh_diem_cat_lo_chot_loi(row_moi_nhat)
                         ket_qua_email.append(
-                            f"{ma} — {ten}\n"
+                            f"{ma} — ⭐ Churning (phân phối tại đỉnh)\n"
                             f"  Giá hiện tại: {entry}\n"
                             f"  RSI14: {rsi_str}\n"
                             f"  Cắt lỗ: {sl}\n"
@@ -294,20 +293,20 @@ def main():
         noi_dung = f"{ghi_chu_thi_truong}\n\n" + "\n".join(ket_qua_email)
         noi_dung += (
             "\n\n(Lưu ý: đây là tín hiệu tự động từ backtest đơn giản, không phải "
-            "khuyến nghị đầu tư. Theo backtest 2 năm, tín hiệu Churning có kỳ vọng "
-            "lợi nhuận tốt nhất (+0.46R), Test MA/Breakout gần như hòa vốn — "
-            "cân nhắc mức độ tin cậy khác nhau giữa các loại tín hiệu.)"
+            "khuyến nghị đầu tư. Theo backtest 2 năm, Churning là loại tín hiệu duy nhất "
+            "có kỳ vọng lợi nhuận rõ ràng (+0.46R) — vì vậy bot chỉ gửi email cho loại này, "
+            "các tín hiệu Test MA/Breakout khác được ghi log nhưng không gửi mail.)"
         )
         try:
             gui_email(noi_dung)
-            print("Đã gửi email với", len(ket_qua_email), "tín hiệu mới.")
+            print("Đã gửi email với", len(ket_qua_email), "tín hiệu Churning mới.")
             if co_tin_hieu_moi:
                 ghi_trang_thai_da_gui(da_gui_hom_nay)
         except Exception as e:
             print(f"Gửi email thất bại: {e}")
             print("Sẽ tự động thử gửi lại ở lần chạy kế tiếp.")
     else:
-        print("Không có tín hiệu MỚI nào lúc này.")
+        print("Không có tín hiệu Churning mới lúc này (bình thường — đây là tín hiệu hiếm).")
 
 
 if __name__ == "__main__":
