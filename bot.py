@@ -20,9 +20,40 @@ from vnstock import Quote
 
 # ============ CẤU HÌNH ============
 MA_CO_PHIEU = [
-    "TIP", "MCP", "HPG", "MWG", "VCB", "VHM", "VIC", "GAS", "MSN", "TCB",
+    # ===== 30 MÃ HIỆN TẠI — GIỮ NGUYÊN =====
+    "FPT", "VNM", "HPG", "MWG", "VCB", "VHM", "VIC", "GAS", "MSN", "TCB",
     "CTG", "BID", "VPB", "MBB", "ACB", "STB", "SSI", "VRE", "PLX", "POW",
     "GVR", "SAB", "HDB", "TPB", "BVH", "KDH", "PDR", "NVL", "DGC", "VJC",
+
+    # ===== NGÂN HÀNG =====
+    "EIB", "LPB", "VIB", "MSB", "OCB", "NAB", "SSB",
+
+    # ===== CHỨNG KHOÁN =====
+    "VND", "VCI", "HCM", "FTS", "VIX", "SHS", "CTS",
+
+    # ===== THÉP / VẬT LIỆU =====
+    "HSG", "NKG", "BMP", "NTP",
+
+    # ===== BẤT ĐỘNG SẢN / KCN =====
+    "KBC", "IDC", "SIP", "SZC", "NLG", "DXG", "DIG",
+
+    # ===== ĐIỆN / HẠ TẦNG =====
+    "REE", "PC1", "HDG", "NT2",
+
+    # ===== HÓA CHẤT / PHÂN BÓN =====
+    "DCM", "DPM",
+
+    # ===== CẢNG / LOGISTICS =====
+    "GMD", "VSC",
+
+    # ===== TIÊU DÙNG =====
+    "QNS", "KDC",
+
+    # ===== BẢO HIỂM =====
+    "MIG", "PVI",
+
+    # ===== DẦU KHÍ =====
+    "PVD", "PVS", "BSR",
 ]
 
 THOI_GIAN_NGHI_GIUA_MA = 6
