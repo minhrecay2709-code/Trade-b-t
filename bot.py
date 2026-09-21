@@ -13,6 +13,11 @@ Thay đổi so với bản gốc:
   7. QUAN TRỌNG NHẤT: file trang_thai_da_gui.json sẽ KHÔNG tồn tại giữa
      các lần chạy trên GitHub Actions (mỗi lần chạy là máy ảo mới) — xem
      phần "LƯU Ý VỀ TRẠNG THÁI" cuối file để biết cách khắc phục.
+  8. [MỚI] Mở rộng danh sách mã quét: danh sách dự phòng cứng nâng lên
+     ~130 mã (chủ yếu HOSE, có thêm một số HNX/UPCOM thanh khoản tốt),
+     và LUÔN hợp nhất (union) với kết quả lấy từ vnstock — nên dù API
+     lỗi hay trả về ít mã, bot vẫn quét tối thiểu >100 mã mỗi lần chạy.
+     Xem phần "LƯU Ý VỀ THỜI GIAN CHẠY" cuối file khi tăng số mã.
 """
 
 from __future__ import annotations
@@ -32,6 +37,44 @@ from vnstock import Listing, Quote
 
 # ============ CẤU HÌNH ============
 DS_BO_SUNG_THU_CONG = ["HHP"]
+
+# Danh sách dự phòng "cứng" — dùng để (a) hợp nhất với API cho đủ >100 mã,
+# và (b) làm lưới an toàn khi vnstock lỗi/đổi cấu trúc dữ liệu.
+# Chủ yếu là các mã HOSE thanh khoản khá trở lên, có thêm một số HNX/UPCOM.
+# Nếu vnstock trả về mã không còn niêm yết / đổi sàn thì quet_mot_ma() sẽ
+# tự bỏ qua mã đó (lỗi lấy dữ liệu -> return None), không ảnh hưởng bot.
+DANH_SACH_DU_PHONG = [
+    # Ngân hàng
+    "VCB", "BID", "CTG", "TCB", "VPB", "MBB", "ACB", "STB", "HDB", "TPB",
+    "SHB", "EIB", "LPB", "OCB", "MSB", "VIB", "SSB", "NAB", "ABB", "BAB",
+    # Chứng khoán
+    "SSI", "VND", "HCM", "VCI", "FTS", "BSI", "CTS", "VIX", "AGR", "APS",
+    # Bất động sản
+    "VHM", "VIC", "VRE", "KDH", "PDR", "NVL", "DXG", "NLG", "HDG", "DIG",
+    "CII", "TCH", "VPI", "AGG", "NBB", "DXS", "SZC", "ITA", "SCR", "HDC",
+    # Bán lẻ / tiêu dùng
+    "MWG", "VNM", "MSN", "PNJ", "FRT", "DGW", "KDC", "MCH", "SAB", "BHN",
+    "QNS", "VHC", "ANV", "PAN", "GTN", "TLG",
+    # Thép / vật liệu / xây dựng
+    "HPG", "HSG", "NKG", "HT1", "BCM", "VGC", "KBC", "REE", "GEX", "PC1",
+    "HHV", "LCG", "C4G", "FCN", "CTD", "HBC", "VCG", "DPG",
+    # Năng lượng / dầu khí / tiện ích
+    "GAS", "PLX", "POW", "PVT", "PVD", "PVS", "PVC", "PGV", "NT2", "BWE",
+    "TDM", "VSH", "GEG",
+    # Công nghệ / viễn thông
+    "FPT", "CMG", "ELC", "SGT",
+    # Hàng không / vận tải / logistics
+    "VJC", "HVN", "GMD", "HAH", "VSC", "VOS", "GSP",
+    # Dệt may / thủy sản / nông nghiệp
+    "TNG", "MSH", "STK", "GIL", "TCM", "VGT", "DBC", "HAG", "HNG", "BAF",
+    "PTB", "PHR", "DPR", "TRC",
+    # Hóa chất / phân bón / cao su
+    "DGC", "DPM", "DCM", "GVR", "CSM", "DRC", "SRC",
+    # Dược / y tế
+    "DHG", "IMP", "DVN", "DHT", "TRA", "VDP",
+    # Bảo hiểm / tài chính khác
+    "BVH", "BMI", "PVI", "MIG", "VNR",
+]
 
 THOI_GIAN_NGHI_GIUA_MA = 6
 THOI_GIAN_NGHI_KHI_BI_CHAN = 20
@@ -78,23 +121,32 @@ def kiem_tra_bien_moi_truong() -> tuple[str, str, str]:
 
 # ============ LẤY DANH SÁCH MÃ ============
 def lay_danh_sach_ma() -> list[str]:
+    """
+    Luôn trả về HỢP NHẤT của: mã lấy được từ vnstock (HOSE, hoặc VN100 nếu
+    HOSE lỗi) + danh sách dự phòng cứng ở trên. Nhờ vậy số mã quét luôn
+    > 100 dù API có hoạt động tốt hay không.
+    """
+    ds_tu_api: list[str] = []
     try:
         listing = Listing()
         try:
             ds = listing.symbols_by_exchange("HOSE")
-            ds = list(ds["symbol"]) if hasattr(ds, "columns") else list(ds)
+            ds_tu_api = list(ds["symbol"]) if hasattr(ds, "columns") else list(ds)
         except Exception:
-            ds = listing.symbols_by_group("VN100")
-        ds_day_du = list(dict.fromkeys(list(ds) + DS_BO_SUNG_THU_CONG))
-        log.info(f"Lấy được {len(ds_day_du)} mã để quét (đã gộp thêm {DS_BO_SUNG_THU_CONG}).")
-        return ds_day_du
+            ds_tu_api = list(listing.symbols_by_group("VN100"))
+        log.info(f"Lấy được {len(ds_tu_api)} mã từ vnstock.")
     except Exception as e:
-        log.warning(f"Không lấy được danh sách từ vnstock ({e}), dùng danh sách dự phòng.")
-        return DS_BO_SUNG_THU_CONG + [
-            "HPG", "MWG", "VCB", "VHM", "VIC", "GAS", "MSN", "TCB",
-            "CTG", "BID", "VPB", "MBB", "ACB", "STB", "SSI", "VRE", "PLX", "POW",
-            "GVR", "SAB", "HDB", "TPB", "BVH", "KDH", "PDR", "NVL", "DGC", "VJC",
-        ]
+        log.warning(f"Không lấy được danh sách từ vnstock ({e}), sẽ chỉ dùng danh sách dự phòng.")
+
+    ds_day_du = list(
+        dict.fromkeys(list(ds_tu_api) + DANH_SACH_DU_PHONG + DS_BO_SUNG_THU_CONG)
+    )
+    log.info(
+        f"Tổng cộng {len(ds_day_du)} mã sẽ được quét "
+        f"(API: {len(ds_tu_api)}, dự phòng: {len(DANH_SACH_DU_PHONG)}, "
+        f"bổ sung thủ công: {DS_BO_SUNG_THU_CONG})."
+    )
+    return ds_day_du
 
 
 # ============ ĐỌC / GHI TRẠNG THÁI ĐÃ GỬI ============
@@ -328,3 +380,18 @@ if __name__ == "__main__":
     except Exception as e:
         log.error(f"Bot dừng vì lỗi không xử lý được: {e}")
         raise
+
+# ============ LƯU Ý VỀ THỜI GIAN CHẠY ============
+# Với ~130-160 mã, mỗi mã nghỉ THOI_GIAN_NGHI_GIUA_MA (6s) + jitter trước
+# khi gọi API, cộng thời gian gọi API thực tế -> tổng thời gian chạy rơi
+# vào khoảng 15-30 phút cho 1 lần quét (chưa tính retry khi bị rate-limit).
+# GitHub Actions cho phép job chạy tối đa 6 tiếng nên vẫn rất thoải mái.
+# Nếu muốn quét nhanh hơn, có thể giảm THOI_GIAN_NGHI_GIUA_MA xuống 3-4s,
+# nhưng dễ bị nguồn dữ liệu chặn (rate limit) hơn.
+
+# ============ LƯU Ý VỀ TRẠNG THÁI ============
+# Trên GitHub Actions, mỗi lần chạy job là một máy ảo mới, nên file
+# trang_thai_da_gui.json sẽ KHÔNG được giữ lại giữa các lần chạy trừ khi
+# bạn tự lưu nó lại bằng actions/cache hoặc commit file này vào repo sau
+# mỗi lần chạy (actions/upload-artifact + download-artifact, hoặc
+# git commit trong step cuối của workflow).
