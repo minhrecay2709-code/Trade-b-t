@@ -1,38 +1,3 @@
-name: Trade Bot
-
-on:
-  schedule:
-    - cron: '0 2-4,6-7 * * 1-5'
-  workflow_dispatch:
-
-concurrency:
-  group: trade-bot
-  cancel-in-progress: false
-
-permissions:
-  contents: write
-
-jobs:
-  quet-tin-hieu:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: pip install -r requirements.txt
-      - run: python bot.py
-        env:
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
-      - name: Lưu trạng thái đã gửi vào repo
-        run: |
-          git config user.name "trade-bot"
-          git config user.email "trade-bot@users.noreply.github.com"
-          git add trang_thai_da_gui.json
-          git diff --staged --quiet && echo "Không có gì thay đổi" || (git commit -m "Cập nhật trạng thái đã gửi" && git push)
 """
 BOT QUÉT TÍN HIỆU + GỬI EMAIL
 Bản mở rộng: quét toàn bộ sàn HOSE (không chỉ VN100), chấm điểm 4 yếu tố
