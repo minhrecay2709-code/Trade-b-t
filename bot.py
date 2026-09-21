@@ -328,32 +328,3 @@ if __name__ == "__main__":
     except Exception as e:
         log.error(f"Bot dừng vì lỗi không xử lý được: {e}")
         raise
-
-
-# ============ LƯU Ý VỀ TRẠNG THÁI TRÊN GITHUB ACTIONS ============
-# `trang_thai_da_gui.json` chỉ tồn tại trong máy ảo của LẦN CHẠY HIỆN TẠI.
-# Nếu workflow chạy nhiều lần/ngày, bot sẽ không biết đã gửi mã nào rồi và
-# có thể gửi trùng email. Hai cách khắc phục phổ biến, chọn 1:
-#
-# 1) Commit file trạng thái ngược lại repo ở cuối mỗi lần chạy (đơn giản
-#    nhất). Thêm vào cuối file .yml workflow, sau bước chạy script:
-#
-#      - name: Lưu trạng thái đã gửi
-#        run: |
-#          git config user.name "trade-bot"
-#          git config user.email "bot@users.noreply.github.com"
-#          git add trang_thai_da_gui.json
-#          git diff --staged --quiet || git commit -m "cap nhat trang thai gui"
-#          git push
-#
-# 2) Dùng actions/cache để lưu file giữa các lần chạy (không tạo commit
-#    rác vào repo):
-#
-#      - uses: actions/cache@v4
-#        with:
-#          path: trang_thai_da_gui.json
-#          key: trang-thai-gui-${{ github.run_id }}
-#          restore-keys: trang-thai-gui-
-#
-# Nếu bot chỉ chạy đúng 1 lần/ngày thì vấn đề này không ảnh hưởng gì, có
-# thể bỏ qua.
