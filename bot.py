@@ -28,31 +28,27 @@ import os
 import random
 import smtplib
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from email.mime.text import MIMEText
 
 import numpy as np
 import pandas as pd
-import requests
 
-# ============ NGUỒN DỮ LIỆU: GỌI THẲNG API CÔNG KHAI CỦA TCBS ============
-# Không dùng thư viện "vnstock" nữa: kể từ 24/9/2026, cả "vnstock" lẫn gói
-# phụ thuộc bắt buộc của nó "vnai" đều bị PyPI quarantine (rà soát bảo
-# mật) — mọi phiên bản của cả 2 gói đều KHÔNG thể pip install được, đây
-# là giới hạn từ hạ tầng PyPI, không sửa được từ phía code.
-# Giải pháp: gọi thẳng API công khai (không chính thức) mà chính vnstock
-# cũng dùng ở phía sau cho nguồn TCBS. Chỉ cần "requests" — thư viện phổ
-# biến, không bị ảnh hưởng bởi vụ quarantine trên.
-TCBS_BARS_URL = "https://apipubaws.tcbs.com.vn/stock-insight/v1/stock/bars-long-term"
-TCBS_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
-    ),
-    "Accept": "application/json",
-    "Referer": "https://tcinvest.tcbs.com.vn/",
-}
+# ============ NGUỒN DỮ LIỆU ============
+# Không dùng "vnstock" bản chính thức từ PyPI nữa: kể từ 24/9/2026, cả
+# "vnstock" lẫn gói phụ thuộc bắt buộc "vnai" đều bị PyPI quarantine (rà
+# soát bảo mật) — không thể pip install từ PyPI được, đây là giới hạn hạ
+# tầng, không sửa được từ phía code.
+# Giải pháp: dùng fork "duvu/vnstock" — bản data-only, đã lược bỏ phần
+# telemetry/tài khoản (chính là phần cần "vnai"), cài trực tiếp từ git
+# (xem requirements.txt), không đi qua PyPI nên không bị quarantine.
+# Fork này dùng đúng kiến trúc API mới nhất của vnstock: Market/Reference/
+# Fundamental, nguồn mặc định là KBS — khớp với ý định ban đầu của code
+# gốc (chỉ là code gốc dùng nhầm class Quote cũ, không hỗ trợ KBS).
+from vnstock import Market
+
 CAC_MA_CHI_SO = {"VNINDEX", "HNXINDEX", "UPCOMINDEX"}
+_market = Market()
 
 # ============ CẤU HÌNH ============
 DS_BO_SUNG_THU_CONG = ["HHP"]
@@ -169,32 +165,35 @@ def ghi_trang_thai_da_gui(da_gui_hom_nay: dict) -> None:
         json.dump({str(date.today()): da_gui_hom_nay}, f, ensure_ascii=False, indent=2)
 
 
-# ============ LẤY DỮ LIỆU MỘT MÃ (gọi thẳng API TCBS) ============
+# ============ LẤY DỮ LIỆU MỘT MÃ (qua fork duvu/vnstock, nguồn KBS) ============
+NGUON_DU_LIEU_UU_TIEN = ["KBS", "TCBS", "DNSE"]
+
+
 def lay_du_lieu(ma: str) -> pd.DataFrame:
-    tu_unix = int(datetime.combine(NGAY_BAT_DAU, datetime.min.time()).timestamp())
-    den_unix = int(datetime.combine(NGAY_KET_THUC, datetime.min.time()).timestamp()) + 86400
+    # VNINDEX/HNXINDEX/UPCOMINDEX phải gọi qua market.index.ohlcv(), còn
+    # mã cổ phiếu thường thì gọi qua market.equity.ohlcv().
+    ham_lay_du_lieu = (
+        _market.index.ohlcv if ma.upper() in CAC_MA_CHI_SO else _market.equity.ohlcv
+    )
 
-    loai = "index" if ma.upper() in CAC_MA_CHI_SO else "stock"
-    tham_so = {
-        "ticker": ma,
-        "type": loai,
-        "resolution": "D",
-        "from": tu_unix,
-        "to": den_unix,
-    }
-    resp = requests.get(TCBS_BARS_URL, params=tham_so, headers=TCBS_HEADERS, timeout=15)
-    resp.raise_for_status()
-    du_lieu = resp.json().get("data") or []
-    if not du_lieu:
-        return pd.DataFrame()
-
-    df = pd.DataFrame(du_lieu)
-    # TCBS trả về cột: open, high, low, close, volume, tradingDate
-    if "tradingDate" in df.columns:
-        df["time"] = pd.to_datetime(df["tradingDate"])
-    df = df.sort_values("time" if "time" in df.columns else df.columns[0]).reset_index(drop=True)
-    cot_can = [c for c in ["time", "open", "high", "low", "close", "volume"] if c in df.columns]
-    return df[cot_can]
+    loi_cuoi: Exception | None = None
+    for nguon in NGUON_DU_LIEU_UU_TIEN:
+        try:
+            df = ham_lay_du_lieu(
+                symbol=ma,
+                start=NGAY_BAT_DAU.strftime("%Y-%m-%d"),
+                end=NGAY_KET_THUC.strftime("%Y-%m-%d"),
+                interval="1D",
+                source=nguon,
+            )
+            if df is not None and len(df) > 0:
+                return df.reset_index(drop=True)
+        except Exception as e:
+            loi_cuoi = e
+            continue
+    if loi_cuoi is not None:
+        raise loi_cuoi
+    return pd.DataFrame()
 
 
 # ============ BỐI CẢNH THỊ TRƯỜNG (VN-INDEX) ============
