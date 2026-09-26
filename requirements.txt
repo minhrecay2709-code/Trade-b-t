@@ -1,3 +1,3 @@
-vnstock
-pandas
 numpy
+pandas
+vnstock
