@@ -1,4 +1,3 @@
-
 """
 BOT QUÉT TÍN HIỆU + GỬI EMAIL (bản tối ưu cho GitHub Actions)
 
@@ -169,14 +168,32 @@ def ghi_trang_thai_da_gui(da_gui_hom_nay: dict) -> None:
 
 
 # ============ LẤY DỮ LIỆU MỘT MÃ ============
+# QUAN TRỌNG: class Quote (dữ liệu lịch sử OHLC) chỉ hỗ trợ source
+# "VCI", "TCBS", "MSN" (hoặc "FMP") — KHÔNG hỗ trợ "KBS" ("KBS" chỉ dùng
+# được cho class Trading/Listing, ví dụ bảng giá realtime). Bản gốc dùng
+# nhầm source="KBS" cho Quote nên mọi lệnh lấy dữ liệu giá đều lỗi.
+# Ở đây dùng "VCI" làm nguồn chính, tự động thử "TCBS" nếu "VCI" lỗi.
+NGUON_DU_LIEU_UU_TIEN = ["VCI", "TCBS"]
+
+
 def lay_du_lieu(ma: str) -> pd.DataFrame:
-    q = Quote(symbol=ma, source="KBS")
-    df = q.history(
-        start=NGAY_BAT_DAU.strftime("%Y-%m-%d"),
-        end=NGAY_KET_THUC.strftime("%Y-%m-%d"),
-        interval="1D",
-    )
-    return df.reset_index(drop=True)
+    loi_cuoi: Exception | None = None
+    for nguon in NGUON_DU_LIEU_UU_TIEN:
+        try:
+            q = Quote(symbol=ma, source=nguon)
+            df = q.history(
+                start=NGAY_BAT_DAU.strftime("%Y-%m-%d"),
+                end=NGAY_KET_THUC.strftime("%Y-%m-%d"),
+                interval="1D",
+            )
+            if df is not None and len(df) > 0:
+                return df.reset_index(drop=True)
+        except Exception as e:
+            loi_cuoi = e
+            continue
+    if loi_cuoi is not None:
+        raise loi_cuoi
+    return pd.DataFrame()
 
 
 # ============ BỐI CẢNH THỊ TRƯỜNG (VN-INDEX) ============
@@ -396,4 +413,3 @@ if __name__ == "__main__":
 # bạn tự lưu nó lại bằng actions/cache hoặc commit file này vào repo sau
 # mỗi lần chạy (actions/upload-artifact + download-artifact, hoặc
 # git commit trong step cuối của workflow).
-                      
