@@ -28,12 +28,31 @@ import os
 import random
 import smtplib
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from email.mime.text import MIMEText
 
 import numpy as np
 import pandas as pd
-from vnstock import Listing, Quote
+import requests
+
+# ============ NGUỒN DỮ LIỆU: GỌI THẲNG API CÔNG KHAI CỦA TCBS ============
+# Không dùng thư viện "vnstock" nữa: kể từ 24/9/2026, cả "vnstock" lẫn gói
+# phụ thuộc bắt buộc của nó "vnai" đều bị PyPI quarantine (rà soát bảo
+# mật) — mọi phiên bản của cả 2 gói đều KHÔNG thể pip install được, đây
+# là giới hạn từ hạ tầng PyPI, không sửa được từ phía code.
+# Giải pháp: gọi thẳng API công khai (không chính thức) mà chính vnstock
+# cũng dùng ở phía sau cho nguồn TCBS. Chỉ cần "requests" — thư viện phổ
+# biến, không bị ảnh hưởng bởi vụ quarantine trên.
+TCBS_BARS_URL = "https://apipubaws.tcbs.com.vn/stock-insight/v1/stock/bars-long-term"
+TCBS_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json",
+    "Referer": "https://tcinvest.tcbs.com.vn/",
+}
+CAC_MA_CHI_SO = {"VNINDEX", "HNXINDEX", "UPCOMINDEX"}
 
 # ============ CẤU HÌNH ============
 DS_BO_SUNG_THU_CONG = ["HHP"]
@@ -122,30 +141,13 @@ def kiem_tra_bien_moi_truong() -> tuple[str, str, str]:
 # ============ LẤY DANH SÁCH MÃ ============
 def lay_danh_sach_ma() -> list[str]:
     """
-    Luôn trả về HỢP NHẤT của: mã lấy được từ vnstock (HOSE, hoặc VN100 nếu
-    HOSE lỗi) + danh sách dự phòng cứng ở trên. Nhờ vậy số mã quét luôn
-    > 100 dù API có hoạt động tốt hay không.
+    Không còn gọi vnstock để lấy danh sách mã (vnstock đang bị PyPI
+    quarantine — xem ghi chú ở đầu file). Dùng thẳng danh sách dự phòng
+    cứng (140 mã) + danh sách bổ sung thủ công. Muốn thêm/bớt mã, sửa
+    trực tiếp DANH_SACH_DU_PHONG hoặc DS_BO_SUNG_THU_CONG ở trên.
     """
-    ds_tu_api: list[str] = []
-    try:
-        listing = Listing()
-        try:
-            ds = listing.symbols_by_exchange("HOSE")
-            ds_tu_api = list(ds["symbol"]) if hasattr(ds, "columns") else list(ds)
-        except Exception:
-            ds_tu_api = list(listing.symbols_by_group("VN100"))
-        log.info(f"Lấy được {len(ds_tu_api)} mã từ vnstock.")
-    except Exception as e:
-        log.warning(f"Không lấy được danh sách từ vnstock ({e}), sẽ chỉ dùng danh sách dự phòng.")
-
-    ds_day_du = list(
-        dict.fromkeys(list(ds_tu_api) + DANH_SACH_DU_PHONG + DS_BO_SUNG_THU_CONG)
-    )
-    log.info(
-        f"Tổng cộng {len(ds_day_du)} mã sẽ được quét "
-        f"(API: {len(ds_tu_api)}, dự phòng: {len(DANH_SACH_DU_PHONG)}, "
-        f"bổ sung thủ công: {DS_BO_SUNG_THU_CONG})."
-    )
+    ds_day_du = list(dict.fromkeys(DANH_SACH_DU_PHONG + DS_BO_SUNG_THU_CONG))
+    log.info(f"Sẽ quét {len(ds_day_du)} mã (danh sách cố định, không phụ thuộc vnstock).")
     return ds_day_du
 
 
@@ -167,33 +169,32 @@ def ghi_trang_thai_da_gui(da_gui_hom_nay: dict) -> None:
         json.dump({str(date.today()): da_gui_hom_nay}, f, ensure_ascii=False, indent=2)
 
 
-# ============ LẤY DỮ LIỆU MỘT MÃ ============
-# QUAN TRỌNG: class Quote (dữ liệu lịch sử OHLC) chỉ hỗ trợ source
-# "VCI", "TCBS", "MSN" (hoặc "FMP") — KHÔNG hỗ trợ "KBS" ("KBS" chỉ dùng
-# được cho class Trading/Listing, ví dụ bảng giá realtime). Bản gốc dùng
-# nhầm source="KBS" cho Quote nên mọi lệnh lấy dữ liệu giá đều lỗi.
-# Ở đây dùng "VCI" làm nguồn chính, tự động thử "TCBS" nếu "VCI" lỗi.
-NGUON_DU_LIEU_UU_TIEN = ["VCI", "TCBS"]
-
-
+# ============ LẤY DỮ LIỆU MỘT MÃ (gọi thẳng API TCBS) ============
 def lay_du_lieu(ma: str) -> pd.DataFrame:
-    loi_cuoi: Exception | None = None
-    for nguon in NGUON_DU_LIEU_UU_TIEN:
-        try:
-            q = Quote(symbol=ma, source=nguon)
-            df = q.history(
-                start=NGAY_BAT_DAU.strftime("%Y-%m-%d"),
-                end=NGAY_KET_THUC.strftime("%Y-%m-%d"),
-                interval="1D",
-            )
-            if df is not None and len(df) > 0:
-                return df.reset_index(drop=True)
-        except Exception as e:
-            loi_cuoi = e
-            continue
-    if loi_cuoi is not None:
-        raise loi_cuoi
-    return pd.DataFrame()
+    tu_unix = int(datetime.combine(NGAY_BAT_DAU, datetime.min.time()).timestamp())
+    den_unix = int(datetime.combine(NGAY_KET_THUC, datetime.min.time()).timestamp()) + 86400
+
+    loai = "index" if ma.upper() in CAC_MA_CHI_SO else "stock"
+    tham_so = {
+        "ticker": ma,
+        "type": loai,
+        "resolution": "D",
+        "from": tu_unix,
+        "to": den_unix,
+    }
+    resp = requests.get(TCBS_BARS_URL, params=tham_so, headers=TCBS_HEADERS, timeout=15)
+    resp.raise_for_status()
+    du_lieu = resp.json().get("data") or []
+    if not du_lieu:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(du_lieu)
+    # TCBS trả về cột: open, high, low, close, volume, tradingDate
+    if "tradingDate" in df.columns:
+        df["time"] = pd.to_datetime(df["tradingDate"])
+    df = df.sort_values("time" if "time" in df.columns else df.columns[0]).reset_index(drop=True)
+    cot_can = [c for c in ["time", "open", "high", "low", "close", "volume"] if c in df.columns]
+    return df[cot_can]
 
 
 # ============ BỐI CẢNH THỊ TRƯỜNG (VN-INDEX) ============
