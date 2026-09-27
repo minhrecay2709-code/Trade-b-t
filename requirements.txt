@@ -1,4 +1,3 @@
 numpy
 pandas
-requests
-git+https://github.com/duvu/vnstock.git
+xnoapi
