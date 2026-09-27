@@ -35,20 +35,25 @@ import numpy as np
 import pandas as pd
 
 # ============ NGUỒN DỮ LIỆU ============
-# Không dùng "vnstock" bản chính thức từ PyPI nữa: kể từ 24/9/2026, cả
-# "vnstock" lẫn gói phụ thuộc bắt buộc "vnai" đều bị PyPI quarantine (rà
-# soát bảo mật) — không thể pip install từ PyPI được, đây là giới hạn hạ
-# tầng, không sửa được từ phía code.
-# Giải pháp: dùng fork "duvu/vnstock" — bản data-only, đã lược bỏ phần
-# telemetry/tài khoản (chính là phần cần "vnai"), cài trực tiếp từ git
-# (xem requirements.txt), không đi qua PyPI nên không bị quarantine.
-# Fork này dùng đúng kiến trúc API mới nhất của vnstock: Market/Reference/
-# Fundamental, nguồn mặc định là KBS — khớp với ý định ban đầu của code
-# gốc (chỉ là code gốc dùng nhầm class Quote cũ, không hỗ trợ KBS).
-from vnstock import Market
+# Không dùng "vnstock" nữa: kể từ 24/9/2026, cả "vnstock" lẫn gói phụ
+# thuộc bắt buộc "vnai" đều bị PyPI quarantine (rà soát bảo mật) — không
+# thể pip install được, đây là giới hạn hạ tầng, không sửa được từ phía
+# code (2 phương án thay thế trước đó — gọi thẳng API TCBS, và fork
+# "duvu/vnstock" — đều thất bại khi kiểm tra thực tế).
+# Giải pháp hiện tại: dùng "xnoapi" — thư viện PyPI RIÊNG BIỆT, KHÔNG bị
+# quarantine, còn được cập nhật bình thường, MIT license, một trong hai
+# tác giả duy trì chính là thinh-vu (tác giả gốc của vnstock). Cấu trúc
+# API gần như giống hệt code gốc: Quote(symbol).history(start, end,
+# interval).
+from xnoapi.vn.data.stocks import Quote
 
 CAC_MA_CHI_SO = {"VNINDEX", "HNXINDEX", "UPCOMINDEX"}
-_market = Market()
+# Nếu xnoapi.vn của bạn yêu cầu API key, đăng ký miễn phí tại xno.vn rồi
+# đặt secret XNO_APIKEY trên GitHub — code sẽ tự dùng nếu có.
+_XNO_APIKEY = os.environ.get("XNO_APIKEY", "").strip()
+if _XNO_APIKEY:
+    from xnoapi import client as _xno_client
+    _xno_client(apikey=_XNO_APIKEY)
 
 # ============ CẤU HÌNH ============
 DS_BO_SUNG_THU_CONG = ["HHP"]
@@ -165,35 +170,17 @@ def ghi_trang_thai_da_gui(da_gui_hom_nay: dict) -> None:
         json.dump({str(date.today()): da_gui_hom_nay}, f, ensure_ascii=False, indent=2)
 
 
-# ============ LẤY DỮ LIỆU MỘT MÃ (qua fork duvu/vnstock, nguồn KBS) ============
-NGUON_DU_LIEU_UU_TIEN = ["KBS", "TCBS", "DNSE"]
-
-
+# ============ LẤY DỮ LIỆU MỘT MÃ (qua xnoapi) ============
 def lay_du_lieu(ma: str) -> pd.DataFrame:
-    # VNINDEX/HNXINDEX/UPCOMINDEX phải gọi qua market.index.ohlcv(), còn
-    # mã cổ phiếu thường thì gọi qua market.equity.ohlcv().
-    ham_lay_du_lieu = (
-        _market.index.ohlcv if ma.upper() in CAC_MA_CHI_SO else _market.equity.ohlcv
+    q = Quote(ma)
+    df = q.history(
+        start=NGAY_BAT_DAU.strftime("%Y-%m-%d"),
+        end=NGAY_KET_THUC.strftime("%Y-%m-%d"),
+        interval="1D",
     )
-
-    loi_cuoi: Exception | None = None
-    for nguon in NGUON_DU_LIEU_UU_TIEN:
-        try:
-            df = ham_lay_du_lieu(
-                symbol=ma,
-                start=NGAY_BAT_DAU.strftime("%Y-%m-%d"),
-                end=NGAY_KET_THUC.strftime("%Y-%m-%d"),
-                interval="1D",
-                source=nguon,
-            )
-            if df is not None and len(df) > 0:
-                return df.reset_index(drop=True)
-        except Exception as e:
-            loi_cuoi = e
-            continue
-    if loi_cuoi is not None:
-        raise loi_cuoi
-    return pd.DataFrame()
+    if df is None or len(df) == 0:
+        return pd.DataFrame()
+    return df.reset_index(drop=True)
 
 
 # ============ BỐI CẢNH THỊ TRƯỜNG (VN-INDEX) ============
